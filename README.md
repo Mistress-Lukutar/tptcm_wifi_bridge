@@ -109,4 +109,4 @@ tptcm_wifi_bridge/
 
 ## License
 
-Proprietary - Mistress Lukutar
+MIT - Mistress-Lukutar (see [LICENSE](LICENSE))

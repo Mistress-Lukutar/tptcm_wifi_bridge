@@ -235,4 +235,4 @@ raw_tcp_server  ── PrinterUart_Write() ──►  printer_uart (UART1)
 
 ## License
 
-Proprietary - Mistress Lukutar
+MIT - Mistress-Lukutar (see `LICENSE` in the repository root)
