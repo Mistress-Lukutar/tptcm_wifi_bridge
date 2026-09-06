@@ -1,0 +1,31 @@
+# ESP-IDF build artifacts
+build/
+build_*_*/
+sdkconfig
+sdkconfig.old
+
+# ESP-IDF Component Manager
+managed_components/
+dependencies.lock
+
+# Python cache
+__pycache__/
+.pytest_cache/
+.ruff_cache/
+
+# Editor / IDE / agent files
+.vscode/
+.claude/
+.zcode/
+.agents/
+*.launch
+
+# Altium generated files (sources .SchDoc/.PcbDoc/.PrjPcb/.IntLib/.OutJob are tracked)
+Altium/**/History/
+Altium/**/__Previews/
+Altium/**/Project Logs for */
+Altium/**/Project Outputs for */
+
+# OS junk
+.DS_Store
+Thumbs.db
