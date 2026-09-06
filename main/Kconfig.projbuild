@@ -1,0 +1,75 @@
+menu "TPTCM WiFi Bridge"
+
+    config TPTCM_UART_PORT
+        int "Printer UART port number"
+        default 1
+        range 1 2
+        help
+            UART peripheral connected to the printer through the
+            SN74LVC1T45 level translators. UART0 is the debug
+            console, do not use it.
+
+    config TPTCM_UART_TX_GPIO
+        int "UART TX GPIO (ESP32 -> SN74LVC1T45 -> printer RX)"
+        default 15
+        range 0 48
+        help
+            ESP_TX net on the schematic: U1 pin 8 (IO15) feeds the
+            A side of the U2 level translator whose B side drives the
+            printer RX pad (TP4).
+
+    config TPTCM_UART_RX_GPIO
+        int "UART RX GPIO (printer TX -> SN74LVC1T45 -> ESP32)"
+        default 17
+        range 0 48
+        help
+            ESP_RX net on the schematic: U1 pin 10 (IO17) is fed by the
+            A side of the U3 level translator whose B side listens to
+            the printer TX pad (TP5).
+
+    config TPTCM_UART_BAUD
+        int "UART baud rate"
+        default 115200
+        help
+            Must match the baud rate configured on the printer
+            (DIP switches). Common values: 9600, 115200.
+
+    config TPTCM_TCP_PORT
+        int "RAW TCP server port"
+        default 9100
+        help
+            Port the TCP print server listens on. 9100 is the standard
+            JetDirect RAW port used by Windows Standard TCP/IP Port.
+
+    config TPTCM_WIFI_SSID
+        string "Default WiFi SSID (optional)"
+        default ""
+        help
+            WiFi network to join when no credentials are saved in NVS.
+            Leave empty to always start the provisioning AP on first boot.
+
+    config TPTCM_WIFI_PASSWORD
+        string "Default WiFi password (optional)"
+        default ""
+
+    config TPTCM_STA_MAX_RETRY
+        int "STA connect retries before starting provisioning AP"
+        default 5
+        range 1 20
+        help
+            After this many failed connection attempts with saved/default
+            credentials the device additionally starts the provisioning
+            access point so the network can be reconfigured.
+
+    config TPTCM_AP_SSID
+        string "Provisioning AP SSID"
+        default "TPTCM60-Setup"
+
+    config TPTCM_AP_PASSWORD
+        string "Provisioning AP password"
+        default "setup12345"
+        help
+            WPA2 password of the provisioning access point. Must be at
+            least 8 characters, otherwise the AP starts open.
+
+endmenu

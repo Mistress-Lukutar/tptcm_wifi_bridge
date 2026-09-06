@@ -1,0 +1,17 @@
+# TPTCM WiFi Bridge - sdkconfig defaults
+# Target chip
+CONFIG_IDF_TARGET="esp32s3"
+
+# Flash: ESP32-S3-WROOM-1-N8R8 has 8 MB flash (plus 8 MB octal PSRAM)
+CONFIG_ESPTOOLPY_FLASHMODE_DIO=y
+CONFIG_ESPTOOLPY_FLASHFREQ_80M=y
+CONFIG_ESPTOOLPY_FLASHSIZE_8MB=y
+
+# Partition table: single large app
+CONFIG_PARTITION_TABLE_SINGLE_APP_LARGE=y
+
+# Main task stack: WiFi + HTTP provisioning needs more than the default
+CONFIG_ESP_MAIN_TASK_STACK_SIZE=8192
+
+# FreeRTOS tick
+CONFIG_FREERTOS_HZ=1000
