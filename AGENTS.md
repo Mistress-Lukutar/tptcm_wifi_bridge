@@ -21,6 +21,11 @@ parsing on the bridge side.
 - Optional Kconfig default credentials for development
 - STA auto-reconnect; provisioning AP starts after repeated connect failures
   and stops automatically once the station gets an IP
+- OTA firmware updates over WiFi: admin page with image upload, dual OTA
+  slots + bootloader rollback (no USB needed after the initial partition
+  migration)
+- Remote logs: ESP_LOG is teed into a RAM ring served by the admin page and
+  by a one-client TCP live tail
 
 ### Target Hardware
 
@@ -58,11 +63,14 @@ tptcm_wifi_bridge/
 ├── components/                 # Custom ESP-IDF components
 │   ├── printer_uart/           # UART driver for the printer link
 │   ├── wifi_manager/           # STA + NVS credentials + AP provisioning
-│   └── raw_tcp_server/         # RAW TCP :9100 server -> UART forwarder
+│   ├── raw_tcp_server/         # RAW TCP :9100 server -> UART forwarder
+│   ├── log_stream/             # ESP_LOG tee: RAM ring + TCP live tail
+│   └── ota_server/             # Admin page: OTA upload, /log, device info
 ├── scripts/
 │   └── print_test.py           # TCP print test utility (PC side)
 ├── Altium/TPTCM_WiFi_Bridge/  # Hardware: Bridge.SchDoc, Bridge.PcbDoc
 ├── build_and_flash.ps1         # Windows build/flash script
+├── partitions.csv              # Dual-slot OTA partition table
 ├── sdkconfig.defaults          # Target chip and stack defaults
 └── README.md
 ```
@@ -156,10 +164,14 @@ raw_tcp_server  ── PrinterUart_Write() ──►  printer_uart (UART1)
 3. `WifiManager_Init()` — netif, event handlers, load credentials from NVS
    (fallback: Kconfig defaults, else none)
 4. `WifiManager_Start()`:
-   - credentials known → STA connect; TCP server starts on "got IP"
+   - credentials known → STA connect; TCP server starts on "got IP";
+     the log tail and the admin/OTA page start too, and the running
+     OTA image is confirmed for the rollback watchdog
    - no credentials → provisioning AP + HTTP portal + wildcard DNS
 5. Repeated STA failures (default 5) → provisioning AP additionally;
    the AP stops by itself once the station gets an IP
+6. A 60 s uptime timer confirms a "pending verify" OTA image even when
+   WiFi never connects (a bridge that runs is good enough)
 
 ### Component Boundaries
 
@@ -168,6 +180,11 @@ raw_tcp_server  ── PrinterUart_Write() ──►  printer_uart (UART1)
 - `wifi_manager` never touches the printer or TCP server — it notifies via
   the `WifiManager_ConnectedCb` callback registered in `main.c`
 - `printer_uart` has no network dependencies
+- `log_stream` tees `esp_log_set_vprintf` into a RAM ring and serves a TCP
+  tail; it has no knowledge of the printer or of main's state
+- `ota_server` depends on `log_stream` (log snapshot) and `main.h` (it
+  refuses uploads while `APP_STATE_PRINTING`); rollback confirmation is
+  done by `main.c`
 
 ### Thread Safety
 
@@ -185,8 +202,11 @@ raw_tcp_server  ── PrinterUart_Write() ──►  printer_uart (UART1)
 | `TPTCM_UART_PORT` | 1 | UART peripheral (UART0 = console, do not use) |
 | `TPTCM_UART_TX_GPIO` | 15 | ESP32 → SN74LVC1T45 (U2) → printer RX |
 | `TPTCM_UART_RX_GPIO` | 17 | printer TX → SN74LVC1T45 (U3) → ESP32 |
-| `TPTCM_UART_BAUD` | 115200 | Must match printer DIP switches |
+| `TPTCM_UART_BAUD` | 57600 | Must match printer DIP switches |
 | `TPTCM_TCP_PORT` | 9100 | JetDirect RAW port |
+| `TPTCM_ADMIN_PORT` | 80 | Admin page + OTA upload port (http://<ip>/) |
+| `TPTCM_LOG_TCP_PORT` | 3333 | One-client TCP live log tail (PuTTY Raw / nc) |
+| `TPTCM_LOG_RING_SIZE` | 16384 | RAM ring kept for the remote log viewers |
 | `TPTCM_LOG_TRAFFIC` | y | Console traffic log: chunks from the print client and chunks queued to the printer UART (hex preview) |
 | `TPTCM_LOG_TRAFFIC_DUMP_BYTES` | 24 | Leading bytes rendered as hex per traffic log line (0 = sizes only) |
 | `TPTCM_WIFI_SSID` | "" | Default SSID (empty = always provision on first boot) |
@@ -203,6 +223,19 @@ raw_tcp_server  ── PrinterUart_Write() ──►  printer_uart (UART1)
 - `idf.py monitor` / `build_and_flash.ps1 -Monitor` for boot logs
 - Port probe from Windows: `Test-NetConnection <ip> -Port 9100`
 - Print test: `python scripts/print_test.py <ip> "Hello"`
+
+### OTA Update (WiFi)
+
+1. Open `http://<device-ip>/` — the admin page shows the firmware version,
+   build time, running OTA slot and image state
+2. Choose `tptcm_wifi_bridge.bin` from `build/` → *Upload & flash*; the
+   device writes the other OTA slot and reboots into it
+3. The new image must confirm itself ("pending verify" → "valid") after
+   the station gets an IP, or within 60 s of uptime; otherwise the
+   bootloader rolls back to the previous slot on the next boot
+4. Do not update while a print job is running (the server refuses with
+   HTTP 409); the initial migration to `partitions.csv` takes one USB
+   flash, all later updates go over WiFi
 
 ### Provisioning Flow Test
 

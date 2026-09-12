@@ -29,10 +29,10 @@ menu "TPTCM WiFi Bridge"
 
     config TPTCM_UART_BAUD
         int "UART baud rate"
-        default 9600
+        default 57600
         help
             Must match the baud rate configured on the printer
-            (DIP switches). Common values: 9600, 115200.
+            (DIP switches). Common values: 9600, 57600, 115200.
 
     config TPTCM_TCP_PORT
         int "RAW TCP server port"
@@ -40,6 +40,31 @@ menu "TPTCM WiFi Bridge"
         help
             Port the TCP print server listens on. 9100 is the standard
             JetDirect RAW port used by Windows Standard TCP/IP Port.
+
+    config TPTCM_ADMIN_PORT
+        int "Admin page and OTA upload TCP port"
+        default 80
+        range 1 65535
+        help
+            Port of the admin web page served once the station has an
+            IP: device info, firmware upload (POST /ota) and the log
+            viewer. Open http://<device-ip>/ in a browser.
+
+    config TPTCM_LOG_TCP_PORT
+        int "Live log tail TCP port"
+        default 3333
+        range 1 65535
+        help
+            One-client TCP server streaming ESP_LOG output as plain
+            text. Connect with PuTTY (connection type Raw) or nc.
+
+    config TPTCM_LOG_RING_SIZE
+        int "Captured log ring size in bytes"
+        default 16384
+        range 4096 65536
+        help
+            Bytes of ESP_LOG output kept in RAM for the remote log
+            viewers (admin page and TCP tail).
 
     config TPTCM_LOG_TRAFFIC
         bool "Log TCP and printer UART traffic on the console"

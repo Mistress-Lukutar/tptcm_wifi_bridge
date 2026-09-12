@@ -5,5 +5,8 @@ idf_component_register(
         printer_uart
         raw_tcp_server
         wifi_manager
+        log_stream
+        ota_server
+        app_update
         nvs_flash
 )
