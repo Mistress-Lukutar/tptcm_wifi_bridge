@@ -3,8 +3,8 @@
  * @brief  RAW TCP print server (JetDirect port 9100) forwarding to the
  *         printer UART
  * @author Mistress-Lukutar
- * @date   2026-09-03
- * @version v1.0.0
+ * @date   2026-09-12
+ * @version v1.1.0
  */
 
 /* Includes ------------------------------------------------------------------*/
@@ -114,6 +114,7 @@ static void _serveClient(int client_sock) {
   App_SetState(APP_STATE_PRINTING);
   ESP_LOGI(s_tag, "Client connected: %s", ip_str);
 
+  uint32_t total_bytes = 0U;
   while (true) {
     int len = recv(client_sock, rx_buf, sizeof(rx_buf), 0);
     if (len < 0) {
@@ -123,6 +124,10 @@ static void _serveClient(int client_sock) {
     if (len == 0) {
       break; /* orderly shutdown by the peer */
     }
+    total_bytes += (uint32_t)len;
+#if CONFIG_TPTCM_LOG_TRAFFIC
+    ESP_LOGI(s_tag, "TCP <- %s: %d bytes", ip_str, len);
+#endif
     if (PrinterUart_Write(rx_buf, (uint32_t)len) != PUART_OK) {
       ESP_LOGE(s_tag, "UART write failed, dropping client");
       break;
@@ -135,7 +140,10 @@ static void _serveClient(int client_sock) {
 
   s_has_client = false;
   App_SetState(APP_STATE_READY);
-  ESP_LOGI(s_tag, "Client disconnected: %s", ip_str);
+  ESP_LOGI(s_tag,
+           "Client disconnected: %s (%u bytes forwarded)",
+           ip_str,
+           (unsigned)total_bytes);
 }
 
 /* Public functions ----------------------------------------------------------*/

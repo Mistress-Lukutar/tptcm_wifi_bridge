@@ -187,11 +187,14 @@ raw_tcp_server  ── PrinterUart_Write() ──►  printer_uart (UART1)
 | `TPTCM_UART_RX_GPIO` | 17 | printer TX → SN74LVC1T45 (U3) → ESP32 |
 | `TPTCM_UART_BAUD` | 115200 | Must match printer DIP switches |
 | `TPTCM_TCP_PORT` | 9100 | JetDirect RAW port |
+| `TPTCM_LOG_TRAFFIC` | y | Console traffic log: chunks from the print client and chunks queued to the printer UART (hex preview) |
+| `TPTCM_LOG_TRAFFIC_DUMP_BYTES` | 24 | Leading bytes rendered as hex per traffic log line (0 = sizes only) |
 | `TPTCM_WIFI_SSID` | "" | Default SSID (empty = always provision on first boot) |
 | `TPTCM_WIFI_PASSWORD` | "" | Default password |
 | `TPTCM_STA_MAX_RETRY` | 5 | Connect failures before the provisioning AP starts |
 | `TPTCM_AP_SSID` | TPTCM60-Setup | Provisioning AP name |
 | `TPTCM_AP_PASSWORD` | setup12345 | Provisioning AP password (≥8 chars) |
+| `TPTCM_WIFI_MAX_TX_POWER` | 40 | WiFi max TX power, 0.25 dBm units (40 = 10 dBm; avoids the ESP32-S3 SoftAP-visibility issue at 20 dBm, esp-idf#13508). The PHY init data TX power is also capped to 10 dBm in `sdkconfig.defaults` |
 
 ## Testing
 

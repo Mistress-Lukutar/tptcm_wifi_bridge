@@ -15,3 +15,10 @@ CONFIG_ESP_MAIN_TASK_STACK_SIZE=8192
 
 # FreeRTOS tick
 CONFIG_FREERTOS_HZ=1000
+
+# Cap WiFi TX power at 10 dBm in the PHY init data (applies from RF
+# calibration onward): at the default 20 dBm the PA current spikes sag
+# the AMS1117-fed 3.3 V rail and the SoftAP stays invisible to phones
+# (esp-idf#13508). Runtime cap: CONFIG_TPTCM_WIFI_MAX_TX_POWER.
+CONFIG_ESP_PHY_MAX_WIFI_TX_POWER=10
+CONFIG_ESP_PHY_MAX_TX_POWER=10

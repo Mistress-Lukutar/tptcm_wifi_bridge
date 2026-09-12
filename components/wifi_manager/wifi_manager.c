@@ -3,8 +3,8 @@
  * @brief  WiFi connection manager with NVS credentials and AP provisioning
  *         portal (HTTP + wildcard DNS captive portal)
  * @author Mistress-Lukutar
- * @date   2026-09-03
- * @version v1.0.0
+ * @date   2026-09-12
+ * @version v1.1.3
  */
 
 /* Includes ------------------------------------------------------------------*/
@@ -41,6 +41,8 @@
 #define WM_STA_RETRY_PERIOD_US \
   (60U * 1000U * 1000U) /**< STA background retry period in provisioning */
 #define WM_RESTART_DELAY_MS 1500    /**< Delay before reboot after save */
+#define WM_AP_START_TIMEOUT_US \
+  (5U * 1000U * 1000U) /**< AP bring-up watchdog period */
 
 /* Private variables ---------------------------------------------------------*/
 static const char* s_tag = "WIFI_MANAGER";
@@ -52,11 +54,14 @@ static bool s_initialized = false;
 static bool s_connected = false;
 static bool s_provisioning_active = false;
 static int s_retry_count = 0;
+static volatile bool s_ap_started = false;
+static bool s_wifi_started = false; /**< esp_wifi_start() has been called */
 
 static httpd_handle_t s_httpd = NULL;
 static TaskHandle_t s_dns_task = NULL;
 static volatile bool s_dns_stop = false;
 static esp_timer_handle_t s_sta_retry_timer = NULL;
+static esp_timer_handle_t s_ap_watchdog_timer = NULL;
 static WifiManager_ConnectedCb s_connected_cb = NULL;
 
 /* Private function prototypes -----------------------------------------------*/
@@ -71,6 +76,8 @@ static void _ipEventHandler(void* arg,
 static WifiManager_Status _loadCredentials(void);
 static WifiManager_Status _saveCredentials(const char* ssid, const char* pass);
 static void _startSta(void);
+static void _applyRfSettings(void);
+static void _apWatchdogCb(void* arg);
 static void _startProvisioning(void);
 static void _stopProvisioning(void);
 static void _staRetryTimerCb(void* arg);
@@ -99,6 +106,7 @@ static void _wifiEventHandler(void* arg,
   (void)data;
 
   if (id == WIFI_EVENT_STA_START) {
+    _applyRfSettings();
     esp_wifi_connect();
     return;
   }
@@ -117,6 +125,30 @@ static void _wifiEventHandler(void* arg,
       esp_wifi_connect();
     }
     /* In provisioning mode the retry timer drives reconnects. */
+    return;
+  }
+
+  if (id == WIFI_EVENT_AP_START) {
+    s_ap_started = true;
+    _applyRfSettings();
+    wifi_config_t cfg = {0};
+    uint8_t channel = 0;
+    if (esp_wifi_get_config(WIFI_IF_AP, &cfg) == ESP_OK) {
+      channel = cfg.ap.channel;
+    }
+    ESP_LOGI(s_tag,
+             "AP interface up, beaconing '%s' on channel %d",
+             CONFIG_TPTCM_AP_SSID,
+             channel);
+    return;
+  }
+
+  if (id == WIFI_EVENT_AP_STOP) {
+    if (s_provisioning_active) {
+      ESP_LOGW(s_tag, "AP interface stopped, SSID disappears from the air");
+    } else {
+      ESP_LOGI(s_tag, "AP interface stopped");
+    }
     return;
   }
 
@@ -227,7 +259,50 @@ static void _startSta(void) {
   ESP_ERROR_CHECK(esp_wifi_set_mode(WIFI_MODE_STA));
   ESP_ERROR_CHECK(esp_wifi_set_config(WIFI_IF_STA, &cfg));
   ESP_ERROR_CHECK(esp_wifi_start());
+  s_wifi_started = true;
   ESP_LOGI(s_tag, "Connecting to SSID: %s", s_ssid);
+}
+
+/**
+ * @brief  Harden the RF once the driver reports the interface started:
+ *         no modem sleep and a TX power cap the 3.3 V rail can sustain
+ *         (see esp-idf#13508 — SoftAP beacons at the default 20 dBm stay
+ *         invisible when the supply sags on PA current spikes).
+ *         Must be called from the WIFI_EVENT_*_START handlers only:
+ *         right after esp_wifi_start() the driver is still initializing
+ *         and rejects esp_wifi_set_max_tx_power with NOT_STARTED.
+ */
+static void _applyRfSettings(void) {
+  esp_err_t err = esp_wifi_set_ps(WIFI_PS_NONE);
+  if (err != ESP_OK) {
+    ESP_LOGW(s_tag, "Failed to disable WiFi modem sleep: 0x%x", err);
+  }
+  err = esp_wifi_set_max_tx_power(CONFIG_TPTCM_WIFI_MAX_TX_POWER);
+  int8_t power = 0;
+  if (err == ESP_OK && esp_wifi_get_max_tx_power(&power) == ESP_OK) {
+    ESP_LOGI(s_tag, "Max TX power: %d (x0.25 dBm)", power);
+  } else {
+    ESP_LOGW(s_tag,
+             "Failed to set max TX power to %d (x0.25 dBm): 0x%x",
+             CONFIG_TPTCM_WIFI_MAX_TX_POWER,
+             err);
+  }
+}
+
+/**
+ * @brief  One-shot watchdog: detect a WiFi driver that never completes
+ *         the asynchronous start (missing WIFI_EVENT_AP_START)
+ * @param  arg Unused timer argument
+ */
+static void _apWatchdogCb(void* arg) {
+  (void)arg;
+  if (s_provisioning_active && !s_ap_started) {
+    ESP_LOGE(s_tag,
+             "AP did not come up within %u s: RF init failed - check the "
+             "3.3 V supply and antenna, and try erasing flash to clear "
+             "the stored PHY calibration",
+             WM_AP_START_TIMEOUT_US / (1000U * 1000U));
+  }
 }
 
 /**
@@ -248,11 +323,30 @@ static void _startProvisioning(void) {
     return;
   }
 
-  /* Switch to APSTA so the radio can still reach the target network. */
+  /*
+   * Clear the AP-started flag BEFORE any driver call below: the mode
+   * switch or esp_wifi_start() can dispatch WIFI_EVENT_AP_START before
+   * this function finishes, and resetting the flag afterwards would wipe
+   * the one set by the event handler, so the watchdog would report a
+   * beaconing AP as "did not come up".
+   */
+  s_ap_started = false;
+
+  /*
+   * esp_wifi_get_mode() reporting a non-NULL mode does NOT mean the driver
+   * is running: on ESP-IDF v6 the mode is already set right after
+   * esp_wifi_init(), while only esp_wifi_start() brings the radio up.
+   * Decide from our own s_wifi_started flag, never from the mode value.
+   */
   wifi_mode_t mode = WIFI_MODE_NULL;
   (void)esp_wifi_get_mode(&mode);
-  bool wifi_running = (mode != WIFI_MODE_NULL);
-  if (wifi_running && mode == WIFI_MODE_STA) {
+  if (!s_wifi_started) {
+    /* Nothing is on the air yet: pure AP provisioning, or APSTA when
+     * credentials exist so the station can keep probing the network. */
+    ESP_ERROR_CHECK(
+        esp_wifi_set_mode(s_has_credentials ? WIFI_MODE_APSTA : WIFI_MODE_AP));
+  } else if (mode == WIFI_MODE_STA) {
+    /* Station is running: switch to APSTA, the AP joins the same radio. */
     ESP_ERROR_CHECK(esp_wifi_set_mode(WIFI_MODE_APSTA));
   }
 
@@ -264,18 +358,34 @@ static void _startProvisioning(void) {
   strncpy((char*)ap_cfg.ap.password,
           CONFIG_TPTCM_AP_PASSWORD,
           sizeof(ap_cfg.ap.password) - 1U);
+  ap_cfg.ap.channel = 1;
   ap_cfg.ap.max_connection = 2;
   ap_cfg.ap.authmode = WIFI_AUTH_WPA2_PSK;
   if (strlen(CONFIG_TPTCM_AP_PASSWORD) < 8U) {
     ap_cfg.ap.authmode = WIFI_AUTH_OPEN;
   }
 
-  if (!wifi_running) {
-    ESP_ERROR_CHECK(esp_wifi_set_mode(WIFI_MODE_AP));
-  }
   ESP_ERROR_CHECK(esp_wifi_set_config(WIFI_IF_AP, &ap_cfg));
-  if (!wifi_running) {
+  if (!s_wifi_started) {
     ESP_ERROR_CHECK(esp_wifi_start());
+    s_wifi_started = true;
+  }
+
+  /* Catch a driver that never finishes the asynchronous start. */
+  if (s_ap_watchdog_timer == NULL) {
+    const esp_timer_create_args_t timer_args = {
+        .callback = _apWatchdogCb,
+        .name = "wm_ap_wd",
+    };
+    if (esp_timer_create(&timer_args, &s_ap_watchdog_timer) != ESP_OK) {
+      s_ap_watchdog_timer = NULL;
+    }
+  }
+  if (s_ap_watchdog_timer != NULL) {
+    /* A one-shot from an earlier run may still be pending: stop it, or
+     * start_once would fail and the old (early) deadline would fire. */
+    (void)esp_timer_stop(s_ap_watchdog_timer);
+    (void)esp_timer_start_once(s_ap_watchdog_timer, WM_AP_START_TIMEOUT_US);
   }
 
   /* HTTP portal */

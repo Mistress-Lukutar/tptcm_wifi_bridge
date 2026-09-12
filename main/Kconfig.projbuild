@@ -29,7 +29,7 @@ menu "TPTCM WiFi Bridge"
 
     config TPTCM_UART_BAUD
         int "UART baud rate"
-        default 115200
+        default 9600
         help
             Must match the baud rate configured on the printer
             (DIP switches). Common values: 9600, 115200.
@@ -40,6 +40,24 @@ menu "TPTCM WiFi Bridge"
         help
             Port the TCP print server listens on. 9100 is the standard
             JetDirect RAW port used by Windows Standard TCP/IP Port.
+
+    config TPTCM_LOG_TRAFFIC
+        bool "Log TCP and printer UART traffic on the console"
+        default y
+        help
+            Log every chunk received from a print client and every
+            chunk queued to the printer UART, with a hex preview of the
+            leading bytes. Keep enabled for bring-up and debugging;
+            disable for a quiet console in production.
+
+    config TPTCM_LOG_TRAFFIC_DUMP_BYTES
+        int "Hex preview bytes per logged traffic chunk"
+        default 24
+        range 0 64
+        depends on TPTCM_LOG_TRAFFIC
+        help
+            How many leading bytes of each chunk are rendered as hex in
+            the traffic log lines. 0 logs only the byte counts.
 
     config TPTCM_WIFI_SSID
         string "Default WiFi SSID (optional)"
@@ -71,5 +89,17 @@ menu "TPTCM WiFi Bridge"
         help
             WPA2 password of the provisioning access point. Must be at
             least 8 characters, otherwise the AP starts open.
+
+    config TPTCM_WIFI_MAX_TX_POWER
+        int "WiFi max TX power in 0.25 dBm units"
+        default 40
+        range 8 84
+        help
+            40 = 10 dBm, 80 = 20 dBm (ESP32 default). At the default
+            20 dBm the PA current spikes can sag the 3.3 V rail
+            (AMS1117 fed from the printer 5 V pad) and distort the RF:
+            known ESP32-S3 issue where the SoftAP beacons "start" in
+            the log but stay invisible to phones (esp-idf#13508).
+            10 dBm is plenty for a desk printer bridge.
 
 endmenu
